@@ -1,45 +1,40 @@
-import os
-from github import Github
-from utility import *
+# Initialize the embeddings model using the specified configuration
+embedding_model = OpenAIEmbeddings(model=EMBEDDING_MODEL)
 
-def main():
-    # Initialize GitHub API with token
-    g = Github(os.getenv('GITHUB_TOKEN'))
+# Setup Pinecone vector store for document indexing and retrieval
+doc_vector_store = PineconeVectorStore(index_name=PINECONE_INDEX, embedding=embedding_model)
 
-    # Get the repo path and PR number from the environment variables
-    repo_path = os.getenv('REPO_PATH')
-    pull_request_number = int(os.getenv('PR_NUMBER'))
+# Configure the retriever to fetch relevant documents based on the input query
+document_retriever = doc_vector_store.as_retriever()
+
+# Initialize the language model with the specified temperature
+language_model = ChatOpenAI(temperature=0.7)
+
+# Define a prompt template to format the query and context
+prompt_template = PromptTemplate(template="{query} Context: {context}", input_variables=["query", "context"])
+
+# Main loop to interact with the user until 'exit' command is received
+user_input = ""
+
+while user_input != "exit":
+    user_input = input("Enter your query (type 'exit' to close the app)> ").strip()
     
-    # Get the repo object
-    repo = g.get_repo(repo_path)
-
-    # Fetch README content (assuming README.md)
-    readme_content = repo.get_contents("README.md")
+    # Skip empty inputs
+    if user_input == "":
+        continue
     
-    # print(readme_content)
-    # Fetch pull request by number
-    pull_request = repo.get_pull(pull_request_number)
-
-    # Get the diffs of the pull request
-    pull_request_diffs = [
-        {
-            "filename": file.filename,
-            "patch": file.patch 
-        } 
-        for file in pull_request.get_files()
-    ]
+    if user_input == "exit":
+        print("Thank you for using the RAG App!\n\n")
+        break
     
-    # Get the commit messages associated with the pull request
-    commit_messages = [commit.commit.message for commit in pull_request.get_commits()]
-
-    # Format data for OpenAI prompt
-    prompt = format_data_for_openai(pull_request_diffs, readme_content, commit_messages)
-
-    # Call OpenAI to generate the updated README content
-    updated_readme = call_openai(prompt)
-
-    # Create PR for Updated PR
-    update_readme_and_create_pr(repo, updated_readme, readme_content.sha)
-
-if __name__ == '__main__':
-    main()
+    # Retrieve relevant documents based on the user's input
+    context_documents = document_retriever.get_relevant_documents(user_input)
+    
+    # Prepare the prompt with the retrieved context
+    formatted_prompt = prompt_template.invoke({"query": user_input, "context": context_documents})
+    
+    # Generate a response using the language model
+    response = language_model.invoke(formatted_prompt)
+    
+    # Display the generated response
+    print(response.content)
